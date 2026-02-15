@@ -155,6 +155,36 @@ Source code:
 	return inner, nil
 }
 
+// SummarizeFolder sends folder documentation to Claude CLI for synthesis and
+// returns a high-level markdown summary.
+func SummarizeFolder(ctx context.Context, folderPath string, childrenContent string) (string, error) {
+	prompt := fmt.Sprintf(`Analyze the following documentation for the folder "%s/" and generate a high-level markdown summary. This will be used as context by AI coding agents.
+
+The documentation below includes per-file descriptions and subfolder summaries for everything inside this folder.
+
+%s
+
+Generate a cohesive overview of this folder's purpose, architecture, and key components. Explain how the files and subfolders relate to each other and what role this folder plays in the larger project.
+
+Start with a brief 1-2 sentence summary, then provide whatever structure best describes this folder (sections, lists, etc.). Be concise but thorough.`, folderPath, childrenContent)
+
+	slog.Debug("summarizing folder", "path", folderPath, "content_length", len(childrenContent), "prompt_length", len(prompt))
+
+	output, err := callWithRetry(ctx, prompt, "text")
+	if err != nil {
+		return "", fmt.Errorf("summarize folder %s: %w", folderPath, err)
+	}
+
+	inner, err := extractResult(output)
+	if err != nil {
+		slog.Debug("could not extract envelope, using raw output", "error", err)
+		inner = output
+	}
+
+	slog.Debug("folder summary complete", "path", folderPath, "output_length", len(inner))
+	return inner, nil
+}
+
 // extractResult parses the Claude CLI JSON envelope and returns the inner
 // result string. If the output is not a JSON envelope, returns an error.
 func extractResult(output string) (string, error) {

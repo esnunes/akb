@@ -11,6 +11,7 @@ import (
 	"github.com/esnunes/akb/internal/claude"
 	"github.com/esnunes/akb/internal/config"
 	"github.com/esnunes/akb/internal/manifest"
+	"github.com/esnunes/akb/internal/summarizer"
 	"github.com/esnunes/akb/internal/walker"
 )
 
@@ -171,10 +172,21 @@ func cmdGenerate(repoPath string, workers int, force bool) error {
 	ctx := context.Background()
 	result := analyzer.Run(ctx, repoPath, files, m, workers, force)
 
+	// Generate folder summaries.
+	sumResult := summarizer.Run(ctx, repoPath, files, result.ProcessedFiles, m, workers, force)
+	slog.Info("folder summaries complete",
+		"processed", sumResult.Processed,
+		"failed", sumResult.Failed,
+		"cached", sumResult.Cached)
+
 	// Clean stale files.
 	removed := analyzer.CleanStale(repoPath, files, m)
 	if removed > 0 {
 		slog.Info("removed stale files", "count", removed)
+	}
+	sumRemoved := summarizer.CleanStale(repoPath, files, m)
+	if sumRemoved > 0 {
+		slog.Info("removed stale folder summaries", "count", sumRemoved)
 	}
 
 	// Save manifest.

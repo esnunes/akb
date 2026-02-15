@@ -1,12 +1,17 @@
 {
-  "internal/analyzer/analyzer.go": "sha256:4bfbb3ab10a049bf6f7f7bca862247515d911420142e83fe4ec1397422b049cd",
-  "internal/claude/claude.go": "sha256:5851484786e2a225af2843ef7fe29d148b52329ec88d6bc8958a809af4b02c93",
+  "dir:.": "generated",
+  "dir:internal": "generated",
+  "dir:internal/analyzer": "generated",
+  "internal/analyzer/analyzer.go": "sha256:012c9fa2b576c22b0d2b0bd63fad498a0b5f8b2acb6e03bc489f7f0b6f99d7f3",
+  "internal/claude/claude.go": "sha256:1d7f42242e7ee0dc2921edcdd09ae3a9437e6d7e84191fc33a8fb081db365dd6",
   "internal/claude/claude_test.go": "sha256:a35062d1a9c064e50e336f94a62c1be5d983c44f474763e3f52decf526e5166e",
   "internal/config/config.go": "sha256:c12ab186f197b9e2d39e853101ccc77e802e7361ad22075f4b3cce5c82ac4b19",
   "internal/config/config_test.go": "sha256:01a464399fb670bc62349aefea1c2ec5228fd962ff9ef67aff9f8bd8bdf62737",
   "internal/manifest/manifest.go": "sha256:7e8aed69c5dc445a79d9f384563f6039d145f22224677a2798594ab69a305561",
   "internal/manifest/manifest_test.go": "sha256:ab40a33b900752dd2cf219faea3bd97604cd4f2a6e04971489c7a77d1ad651a1",
+  "internal/summarizer/summarizer.go": "sha256:ea79d7113293556d4749702b136a1dbbd4d78c9d8dfa95a806ba5f6ae16cb500",
+  "internal/summarizer/summarizer_test.go": "sha256:8c1662f1456a1a7aab745b51ca25a1e17eaffee3b6d12bc639233795d84dae45",
   "internal/walker/walker.go": "sha256:c58f848bbe7f724232b3fc55bae4495ea96f3d0bfa1795e7c576cee7027d27f7",
   "internal/walker/walker_test.go": "sha256:3931cb372153b122ff7ed9dc3724a6e46e812aec19d5aa5d954e166a2aa51b38",
-  "main.go": "sha256:cc045c4e3dca440897a2a70e28693dfe47a563ece5e04191f8be0ba3ab2e0a5c"
+  "main.go": "sha256:9c7f8fb73c5e4afafa4f844a880a7bb9aa43bc59b2957c45aa31a7e95f000322"
 }
