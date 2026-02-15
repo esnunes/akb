@@ -1,5 +1,8 @@
 {
-  "internal/analyzer/analyzer.go": "sha256:90f90eaa94778757b81f56caf71b7a47cffbdbc2f660bc87e9d09e07d0f42dd9",
+  "dir:.": "generated",
+  "dir:internal": "generated",
+  "dir:internal/analyzer": "generated",
+  "internal/analyzer/analyzer.go": "sha256:012c9fa2b576c22b0d2b0bd63fad498a0b5f8b2acb6e03bc489f7f0b6f99d7f3",
   "internal/claude/claude.go": "sha256:1d7f42242e7ee0dc2921edcdd09ae3a9437e6d7e84191fc33a8fb081db365dd6",
   "internal/claude/claude_test.go": "sha256:a35062d1a9c064e50e336f94a62c1be5d983c44f474763e3f52decf526e5166e",
   "internal/config/config.go": "sha256:c12ab186f197b9e2d39e853101ccc77e802e7361ad22075f4b3cce5c82ac4b19",

@@ -1,34 +1,33 @@
 # internal/
 
-Core implementation packages for the akb CLI tool, organized as a pipeline that discovers repository files, classifies them via Claude CLI, analyzes their contents, and produces a structured markdown knowledge base under `docs/akb/`.
+Core implementation packages for the akb CLI tool, organized as a pipeline that discovers source files, analyzes them via Claude CLI, and produces a structured markdown knowledge base with incremental caching.
 
 ## Pipeline Architecture
 
-The packages form a layered data flow matching the tool's two subcommands:
+The packages form a linear data flow matching the `generate` subcommand's execution:
 
-**`init` subcommand path:**
-`walker.DiscoverExtensions` → `claude.ClassifyExtensions` → `config.Save`
+1. **config/** — Loads `.akb.yaml` to determine which file extensions to analyze and which paths to exclude. Shared by both `init` and `generate` subcommands as the single source of truth for analysis scope.
 
-**`generate` subcommand path:**
-`config.Load` → `walker.WalkSourceFiles` → `analyzer.Run` → `summarizer.Run` → `manifest.Save`
+2. **walker/** — Traverses the repository filesystem to discover files. Provides two modes: `DiscoverExtensions` (for `init`, collecting all unique extensions) and `WalkSourceFiles` (for `generate`, collecting files matching the config). Hardcodes exclusion of `docs/akb/` to prevent self-referential analysis.
 
-## Package Roles
+3. **analyzer/** — Orchestrates concurrent file processing using a semaphore-bounded goroutine pool. Checks the manifest for unchanged files (cache hits), delegates new/modified files to `claude.AnalyzeFile`, writes markdown output to `docs/akb/`, and cleans up stale entries.
 
-- **config/** — Single source of truth for analysis scope. Bridges `init` (writes config) and `generate` (reads config) by persisting `SourceExtensions` and `ExcludePatterns` in `docs/akb/.config.yaml`.
+4. **summarizer/** — Generates folder-level summaries bottom-up (deepest directories first) so child summaries feed into parent summaries. Uses dirty-set propagation to avoid redundant LLM calls, and writes results with `dir:`-prefixed manifest keys.
 
-- **walker/** — Filesystem traversal layer. Discovers file extensions for classification (`init`) and collects matching source files for analysis (`generate`). Handles directory exclusion via config patterns and hardcoded rules.
+5. **claude/** — The sole LLM integration layer, wrapping the `claude` CLI subprocess. Provides `ClassifyExtensions` (JSON output for `init`), `AnalyzeFile` (text output for per-file docs), and `SummarizeFolder` (text output for folder rollups). All calls use retry with exponential backoff and handle the CLI's JSON envelope format.
 
-- **claude/** — LLM integration layer and sole interface to the Claude CLI subprocess. Provides three capabilities: extension classification (JSON), file analysis (text), and folder summarization (text). All calls go through a shared retry-with-backoff pipeline that manages subprocess execution, env filtering, and response envelope parsing.
+6. **manifest/** — Persistence layer for incremental processing. Tracks SHA-256 hashes of source files in `.manifest.json` with atomic writes. Used by both `analyzer` and `summarizer` to skip unchanged content between runs.
 
-- **analyzer/** — Concurrent file analysis engine. Orchestrates the core `generate` workflow by sending source files through `claude.AnalyzeFile`, writing markdown output, and maintaining cache coherence via content hashes. Handles stale cleanup for deleted files.
+## Cross-Package Dependencies
 
-- **summarizer/** — Bottom-up folder summary generator. After file analysis completes, processes directories deepest-first so child summaries feed into parent summarization via `claude.SummarizeFolder`. Propagates dirtiness upward and cleans orphaned summaries.
+```
+config ←── walker ←── analyzer ──→ claude
+                          │            ↑
+                          ↓            │
+                      manifest    summarizer
+```
 
-- **manifest/** — Incremental processing support. Tracks SHA-256 content hashes in `.manifest.json` so only changed or new files are re-analyzed between runs. Uses atomic writes for crash safety.
-
-## Cross-Cutting Patterns
-
-- **Manifest as shared state** — Both `analyzer` and `summarizer` mutate the manifest in-place during processing, using different key conventions (plain paths vs. `dir:`-prefixed keys).
-- **Concurrency** — `analyzer` and `summarizer` both use `sync.WaitGroup` + buffered channel semaphore for parallel processing.
-- **Cache-then-process** — Both `analyzer` and `summarizer` check hashes/dirtiness before invoking Claude CLI, skipping unchanged content.
-- **Error collection** — Both return structured `Result` types that aggregate per-item failures without aborting the run.
+- **walker** reads config to filter files; **analyzer** consumes walker output
+- **analyzer** and **summarizer** both read/write the shared manifest and call into **claude**
+- **summarizer** runs after **analyzer**, consuming its processed file list to determine dirty folders
+- **config** and **manifest** are pure data packages with no upstream dependencies

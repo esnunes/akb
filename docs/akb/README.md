@@ -1,33 +1,32 @@
-# akb CLI — Repository Root
+# akb — AI Knowledge Base Generator
 
-Go command-line tool that generates structured markdown knowledge bases from source code repositories, using Claude CLI as an AI backend for file analysis and summarization.
+CLI tool that analyzes source code repositories and generates structured markdown documentation for use as context by AI coding agents. It operates through two subcommands: `init` (discovers and classifies file extensions) and `generate` (produces per-file and per-folder markdown summaries with incremental caching).
 
 ## Architecture
 
-The tool operates in two phases, each mapped to a subcommand:
+`main.go` serves as the entry point, parsing subcommands and flags via stdlib `flag`, then delegating to two orchestration functions:
 
-1. **`init`** — Discovers file extensions in the target repo, classifies them as source/non-source via Claude CLI, and writes a config file (`docs/akb/.config.yaml`).
-
-2. **`generate`** — Reads the config, walks matching source files, concurrently analyzes each via Claude CLI, generates bottom-up folder summaries, and maintains an incremental manifest (`.manifest.json`) so only changed files are re-processed on subsequent runs.
-
-## Entry Point
-
-`main.go` handles CLI parsing with stdlib `flag.NewFlagSet` per subcommand, configures `slog` logging, validates inputs, and delegates to `cmdInit` or `cmdGenerate` which orchestrate the respective pipelines.
+- **`cmdInit`** — One-time setup: discovers file extensions in the repo, uses Claude CLI to classify them as source/non-source, and writes `.akb.yaml` config.
+- **`cmdGenerate`** — Main workflow: walks source files per config, runs concurrent LLM analysis, generates folder summaries bottom-up, cleans stale outputs, and maintains a manifest for incremental processing.
 
 ## Internal Packages (`internal/`)
 
-The packages form a layered pipeline:
+The implementation follows a pipeline architecture:
 
-- **config** — Persists analysis scope (source extensions, exclude patterns) as YAML; bridges `init` output to `generate` input.
-- **walker** — Filesystem traversal; discovers extensions (`init`) and collects source files (`generate`), respecting exclude patterns.
-- **claude** — Sole interface to the Claude CLI subprocess. Provides extension classification (JSON), file analysis (text), and folder summarization (text), all through a shared retry-with-backoff pipeline that handles env filtering and response envelope parsing.
-- **analyzer** — Concurrent file analysis engine using worker pool pattern (`WaitGroup` + channel semaphore). Checks content hashes against manifest to skip unchanged files, writes markdown output, cleans stale files.
-- **summarizer** — Bottom-up folder summary generator. Processes directories deepest-first so child summaries feed into parent calls. Propagates dirtiness upward and cleans orphaned summaries.
-- **manifest** — Tracks SHA-256 content hashes in JSON for incremental processing. Uses atomic writes (temp file + rename) for crash safety.
+1. **config/** — Loads `.akb.yaml` defining analysis scope (source extensions, exclude patterns)
+2. **walker/** — Filesystem traversal with two modes: extension discovery (`init`) and source file collection (`generate`)
+3. **analyzer/** — Concurrent file processing with semaphore-bounded goroutines, manifest-based cache hits, and markdown output to `docs/akb/`
+4. **summarizer/** — Bottom-up folder summaries using dirty-set propagation to minimize redundant LLM calls
+5. **claude/** — LLM integration layer wrapping the `claude` CLI subprocess with retry/backoff and JSON envelope handling
+6. **manifest/** — SHA-256 hash tracking in `.manifest.json` for incremental processing across runs
 
-## Key Design Patterns
+## Data Flow
 
-- **Incremental processing** — Manifest-based content hashing avoids redundant Claude CLI calls across runs.
-- **Concurrency** — Both analyzer and summarizer use buffered channel semaphores with configurable worker counts (1–20).
-- **Error aggregation** — Processing continues past individual file failures; structured `Result` types collect errors and report counts at the end.
-- **Subprocess isolation** — `CLAUDECODE` env var is filtered from subprocess calls so akb can run inside a Claude Code session.
+```
+config → walker → analyzer → claude
+                     │           ↑
+                     ↓           │
+                 manifest   summarizer
+```
+
+Config defines scope, walker discovers files, analyzer processes them concurrently via claude, summarizer rolls up folder-level docs, and manifest persists state for incremental runs. All markdown output lands in `docs/akb/`.

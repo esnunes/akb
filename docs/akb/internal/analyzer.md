@@ -1,20 +1,13 @@
 # internal/analyzer/
 
-Concurrent file analysis engine that orchestrates the core generate workflow — sending source files to Claude CLI for LLM-powered analysis, writing markdown output to `docs/akb/`, and maintaining cache coherence through content-hash tracking.
+Orchestrates concurrent file analysis through Claude CLI and manages the resulting markdown knowledge base, including caching, staleness cleanup, and progress tracking.
 
-## Key Responsibilities
+## Key Components
 
-- **Concurrent processing:** Uses a buffered-channel semaphore pattern to analyze multiple files in parallel, with configurable worker count.
-- **Cache invalidation:** Compares file content hashes against a manifest to skip unchanged files, avoiding redundant LLM calls. Supports a `force` flag to bypass caching.
-- **Stale cleanup:** Detects and removes markdown output files and manifest entries for source files that no longer exist, then prunes empty directories under `docs/akb/`.
-- **Error resilience:** Collects per-file errors without aborting the run, returning a full `Result` summary of processed, failed, and cached counts.
+- **`Run`** — Main entry point that concurrently processes repository files. Uses a buffered channel semaphore (`workers`) to bound goroutines, hashes files against a manifest for change detection, calls `claude.AnalyzeFile` for each file, and writes output to `docs/akb/<relPath>.md`. Collects results (processed/failed/cached counts, errors, processed file paths) via mutex-protected shared state.
 
-## Public API
+- **`CleanStale`** — Removes orphaned markdown files and manifest entries for source files no longer in the repository. Skips `dir:`-prefixed manifest keys (folder summaries). Cleans up empty directories bottom-up after removal.
 
-- **`Run`** — Main entry point for the generate workflow. Processes a list of `walker.FileInfo` files concurrently, delegates analysis to `claude.AnalyzeFile`, writes markdown output, and mutates the manifest in-place.
-- **`CleanStale`** — Post-processing step that removes orphaned output files and manifest entries for deleted source files.
-- **`Result` / `FileError`** — Data types for reporting run outcomes and per-file failures.
+## Architecture
 
-## Dependencies
-
-Sits between the file discovery layer (`walker`) and the LLM interface (`claude`), using `manifest` for hash-based caching. Writes output to the `docs/akb/` directory tree mirroring the repository structure.
+The analyzer sits between the file walker (which discovers files) and the Claude CLI integration (which generates analysis). It owns the concurrency model (`sync.WaitGroup` + semaphore), the caching layer (manifest hash comparison), and the output file lifecycle (creation, directory scaffolding, and stale cleanup). The manifest is modified in-place throughout, serving as both cache and bookkeeping for the knowledge base.
