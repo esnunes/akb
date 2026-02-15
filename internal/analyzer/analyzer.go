@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -15,10 +16,11 @@ import (
 
 // Result summarizes the outcome of a generate run.
 type Result struct {
-	Processed int
-	Failed    int
-	Cached    int
-	Errors    []FileError
+	Processed      int
+	Failed         int
+	Cached         int
+	Errors         []FileError
+	ProcessedFiles []string // relative paths of successfully processed files
 }
 
 // FileError records a failure for a specific file.
@@ -70,6 +72,7 @@ func Run(ctx context.Context, repoPath string, files []walker.FileInfo, m manife
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var errors []FileError
+	var processedFiles []string
 	var processed atomic.Int32
 
 	for _, j := range jobs {
@@ -119,9 +122,10 @@ func Run(ctx context.Context, repoPath string, files []walker.FileInfo, m manife
 
 			slog.Debug("file processed successfully", "path", j.file.RelPath, "output", outPath)
 
-			// Update manifest.
+			// Update manifest and track processed file.
 			mu.Lock()
 			m[j.file.RelPath] = j.hash
+			processedFiles = append(processedFiles, j.file.RelPath)
 			mu.Unlock()
 		}(j)
 	}
@@ -129,10 +133,11 @@ func Run(ctx context.Context, repoPath string, files []walker.FileInfo, m manife
 	wg.Wait()
 
 	return Result{
-		Processed: total - len(errors),
-		Failed:    len(errors),
-		Cached:    cached,
-		Errors:    errors,
+		Processed:      total - len(errors),
+		Failed:         len(errors),
+		Cached:         cached,
+		Errors:         errors,
+		ProcessedFiles: processedFiles,
 	}
 }
 
@@ -148,6 +153,11 @@ func CleanStale(repoPath string, currentFiles []walker.FileInfo, m manifest.Mani
 
 	removed := 0
 	for relPath := range m {
+		// Skip folder summary entries (managed by summarizer).
+		if strings.HasPrefix(relPath, "dir:") {
+			continue
+		}
+
 		if _, exists := current[relPath]; exists {
 			continue
 		}

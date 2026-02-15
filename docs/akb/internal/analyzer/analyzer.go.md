@@ -1,6 +1,6 @@
 # analyzer.go
 
-Orchestrates concurrent file analysis using Claude CLI, writing markdown knowledge base entries and maintaining a manifest for incremental processing. Provides both the main processing pipeline (`Run`) and cleanup of stale outputs (`CleanStale`).
+Core processing engine that concurrently analyzes source files via Claude CLI, writes markdown knowledge base entries, and manages cache invalidation by tracking file hashes in a manifest.
 
 ## Types
 
@@ -8,14 +8,15 @@ Orchestrates concurrent file analysis using Claude CLI, writing markdown knowled
 
 ```go
 type Result struct {
-    Processed int
-    Failed    int
-    Cached    int
-    Errors    []FileError
+    Processed      int
+    Failed         int
+    Cached         int
+    Errors         []FileError
+    ProcessedFiles []string
 }
 ```
 
-Summarizes the outcome of a `Run` invocation. `Processed` counts successfully analyzed files, `Failed` counts errors, and `Cached` counts files skipped because their content hash was unchanged in the manifest.
+Summary of a generate run's outcome. `Processed` counts successfully analyzed files, `Failed` counts errors, `Cached` counts skipped-because-unchanged files, and `ProcessedFiles` lists relative paths of files that were successfully written.
 
 ### FileError
 
@@ -26,7 +27,7 @@ type FileError struct {
 }
 ```
 
-Records a failure for a specific file, associating the repository-relative path with the error encountered during processing.
+Records a processing failure for a specific file, pairing its relative path with the error encountered.
 
 ## Functions
 
@@ -36,27 +37,27 @@ Records a failure for a specific file, associating the repository-relative path 
 func Run(ctx context.Context, repoPath string, files []walker.FileInfo, m manifest.Manifest, workers int, force bool) Result
 ```
 
-Processes source files concurrently to produce markdown knowledge base entries. Core pipeline for the `generate` subcommand.
+Concurrently processes source files into markdown knowledge base entries. For each file:
+1. Computes a content hash and compares against the manifest to skip unchanged files (unless `force` is true).
+2. Reads the file, sends it to `claude.AnalyzeFile` for LLM-powered analysis.
+3. Writes the resulting markdown to `docs/akb/<relPath>.md`.
+4. Updates the manifest map in-place with the new hash.
+
+Uses a buffered-channel semaphore pattern with `workers` goroutines for concurrency. Errors are collected per-file rather than aborting the run. Progress is logged via `slog`.
 
 **Parameters:**
-- `ctx` — context for cancellation propagation (passed to `claude.AnalyzeFile`)
+- `ctx` — context for cancellation (passed through to Claude CLI calls)
 - `repoPath` — repository root path (resolved to absolute internally)
-- `files` — list of files to consider, as returned by `walker`
-- `m` — manifest map tracking file hashes for incremental builds; **mutated in place** with new hashes on success and deletions on stale cleanup
-- `workers` — concurrency limit (bounded via buffered channel semaphore)
-- `force` — when true, reprocesses all files regardless of manifest cache
+- `files` — list of files to process (from `walker` package)
+- `m` — manifest map, mutated in-place with updated hashes for processed files
+- `workers` — max concurrent goroutines
+- `force` — when true, reprocesses all files regardless of cache
 
-**Behavior:**
-1. Hashes each file via `manifest.HashFile`; skips unchanged files unless `force` is set
-2. Spawns goroutines (bounded by `workers`) that read file content, call `claude.AnalyzeFile`, and write output to `docs/akb/<relPath>.md`
-3. Updates the manifest entry on success; collects `FileError` entries on failure
-4. Uses `sync.Mutex` to protect shared state (errors slice, manifest map) and `atomic.Int32` for progress logging
+**Returns:** `Result` summarizing processed, failed, cached counts and any errors.
 
-**Returns:** `Result` with counts and any errors.
+**Dependencies:** `manifest.HashFile`, `claude.AnalyzeFile`, `walker.FileInfo`
 
-**Dependencies:** `claude.AnalyzeFile`, `manifest.HashFile`, `manifest.Manifest.Changed`, `walker.FileInfo`
-
-**Side effects:** Creates directories under `docs/akb/`, writes `.md` files, mutates the manifest map.
+**Side effects:** Writes files under `docs/akb/`, mutates the manifest map.
 
 ### CleanStale
 
@@ -64,18 +65,13 @@ Processes source files concurrently to produce markdown knowledge base entries. 
 func CleanStale(repoPath string, currentFiles []walker.FileInfo, m manifest.Manifest) int
 ```
 
-Removes markdown output files and manifest entries for source files that no longer exist in the repository.
+Removes markdown output files and manifest entries for source files that no longer exist in the repository. After removing stale files, walks `docs/akb/` to clean up any empty directories left behind (using `os.Remove` which only succeeds on empty dirs).
 
 **Parameters:**
 - `repoPath` — repository root path
-- `currentFiles` — the current set of tracked files (used to determine what still exists)
-- `m` — manifest map; **mutated in place** (stale entries are deleted)
+- `currentFiles` — the current set of tracked files; anything in the manifest but not in this set is considered stale
+- `m` — manifest map, mutated in-place (stale entries deleted)
 
 **Returns:** Count of removed stale entries.
 
-**Behavior:**
-1. Builds a set of current relative paths
-2. Iterates manifest entries; for any not in the current set, removes the corresponding `docs/akb/<relPath>.md` file and deletes the manifest entry
-3. Walks `docs/akb/` attempting to remove empty directories (bottom-up cleanup via `os.Remove`, which only succeeds on empty dirs)
-
-**Side effects:** Deletes files and empty directories under `docs/akb/`, mutates the manifest map.
+**Side effects:** Deletes files under `docs/akb/`, removes empty directories, mutates the manifest map.

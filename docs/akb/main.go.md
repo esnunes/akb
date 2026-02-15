@@ -1,6 +1,6 @@
 # main.go
 
-Entry point for the `akb` CLI tool. Parses subcommands (`init`, `generate`, `help`), configures logging, and dispatches to command implementations that orchestrate file discovery, extension classification, and knowledge base generation.
+Entry point for the `akb` CLI tool. Parses subcommands (`init`, `generate`, `help`), configures logging, and orchestrates the two main workflows: discovering/classifying file extensions and generating markdown knowledge base files.
 
 ## Functions
 
@@ -8,67 +8,69 @@ Entry point for the `akb` CLI tool. Parses subcommands (`init`, `generate`, `hel
 
 `func main()`
 
-CLI entry point. Requires at least one argument (subcommand). Dispatches to `runInit`, `runGenerate`, or `printUsage` based on `os.Args[1]`. Exits with code 1 on unknown commands or subcommand errors.
+Top-level entry point. Dispatches to `runInit`, `runGenerate`, or `printUsage` based on `os.Args[1]`. Exits with code 1 on unknown commands or subcommand errors.
 
 ### printUsage
 
 `func printUsage()`
 
-Prints CLI usage/help text to stderr, listing available commands (`init`, `generate`, `help`).
+Prints CLI usage information to stderr, listing available commands (`init`, `generate`, `help`).
 
 ### setupLogger
 
 `func setupLogger(verbose bool)`
 
-Configures the default `slog` logger on stderr. Sets level to `slog.LevelDebug` when `verbose` is true, otherwise `slog.LevelInfo`.
+Configures the default `slog` logger. Sets level to `slog.LevelDebug` when `verbose` is true, otherwise `slog.LevelInfo`. Output goes to stderr via `slog.NewTextHandler`.
 
 ### runInit
 
 `func runInit(args []string) error`
 
-Parses flags for the `init` subcommand (`-path`, `-verbose`) and calls `cmdInit`. Uses `flag.NewFlagSet` with `flag.ExitOnError`.
+Parses flags for the `init` subcommand (`-path`, `-verbose`) using `flag.NewFlagSet`, sets up logging, and delegates to `cmdInit`.
 
-- **Parameters:** `args` — CLI arguments after the `init` subcommand.
-- **Returns:** error from `cmdInit`.
+- **Parameters:** `args` — command-line arguments after "init"
+- **Returns:** error from flag parsing or `cmdInit`
 
 ### runGenerate
 
 `func runGenerate(args []string) error`
 
-Parses flags for the `generate` subcommand (`-path`, `-verbose`, `-workers`, `-force`) and calls `cmdGenerate`. Validates that `workers` is between 1 and 20.
+Parses flags for the `generate` subcommand (`-path`, `-workers`, `-force`, `-verbose`) using `flag.NewFlagSet`, sets up logging, validates worker count (1–20), and delegates to `cmdGenerate`.
 
-- **Parameters:** `args` — CLI arguments after the `generate` subcommand.
-- **Returns:** error from flag validation or `cmdGenerate`.
+- **Parameters:** `args` — command-line arguments after "generate"
+- **Returns:** error from flag parsing, validation, or `cmdGenerate`
 
 ### cmdInit
 
 `func cmdInit(repoPath string) error`
 
-Implements the `init` command workflow:
-1. Checks Claude CLI is installed (`claude.CheckInstalled`).
-2. Skips if config already exists (`config.Exists`).
-3. Discovers file extensions via `walker.DiscoverExtensions`.
-4. Classifies extensions as source/non-source via `claude.ClassifyExtensions`.
-5. Saves config with source extensions and default exclude patterns (`.git/`, `node_modules/`, `vendor/`, `docs/akb/`).
+Orchestrates the `init` workflow:
+1. Checks Claude CLI is installed (`claude.CheckInstalled`)
+2. Skips if config already exists (`config.Exists`)
+3. Discovers file extensions via `walker.DiscoverExtensions`
+4. Classifies extensions as source/non-source via `claude.ClassifyExtensions`
+5. Writes a new `config.Config` with source extensions and default exclude patterns
 
-- **Parameters:** `repoPath` — root path of the repository to analyze.
-- **Returns:** error on discovery, classification, or config save failure.
-- **Dependencies:** `claude`, `config`, `walker` packages.
+- **Parameters:** `repoPath` — repository root directory
+- **Returns:** error on failure, nil on success
+- **Side effects:** creates config file on disk
+- **Dependencies:** `claude`, `config`, `walker` packages
 
 ### cmdGenerate
 
 `func cmdGenerate(repoPath string, workers int, force bool) error`
 
-Implements the `generate` command workflow:
-1. Checks Claude CLI is installed.
-2. Loads config (requires prior `init`).
-3. Walks source files matching configured extensions via `walker.WalkSourceFiles`.
-4. Loads the manifest for incremental processing (`manifest.Load`).
-5. Runs concurrent analysis via `analyzer.Run` with the specified worker count.
-6. Cleans stale output files via `analyzer.CleanStale`.
-7. Saves updated manifest.
-8. Reports processed/failed/cached counts; returns error if any files failed.
+Orchestrates the `generate` workflow:
+1. Checks Claude CLI is installed and config exists
+2. Loads config and scans source files via `walker.WalkSourceFiles`
+3. Loads manifest for incremental processing (`manifest.Load`)
+4. Runs concurrent file analysis via `analyzer.Run`
+5. Generates folder summaries via `summarizer.Run`
+6. Cleans stale output files via `analyzer.CleanStale` and `summarizer.CleanStale`
+7. Saves updated manifest (`manifest.Save`)
+8. Returns error if any files failed processing
 
-- **Parameters:** `repoPath` — repository root; `workers` — concurrency level (1–20); `force` — if true, regenerates all files ignoring manifest cache.
-- **Returns:** error on missing config, walk failure, manifest I/O failure, or if any files failed processing.
-- **Dependencies:** `analyzer`, `claude`, `config`, `manifest`, `walker` packages.
+- **Parameters:** `repoPath` — repository root; `workers` — concurrency level (1–20); `force` — if true, regenerate all files ignoring manifest cache
+- **Returns:** error on failure (including partial failures with count), nil on success
+- **Side effects:** writes/removes markdown files in `docs/akb/`, updates manifest file
+- **Dependencies:** `analyzer`, `claude`, `config`, `manifest`, `summarizer`, `walker` packages
