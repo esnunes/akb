@@ -1,0 +1,7 @@
+[env]
+
+[tools]
+go = { version = "1.25.5" }
+"go:golang.org/x/tools/gopls" = { version = "v0.20.0" }
+node = { version = "25.4.0" }
+"npm:@anthropic-ai/claude-code" = { version = "latest" }
