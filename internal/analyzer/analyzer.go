@@ -126,6 +126,9 @@ func Run(ctx context.Context, repoPath string, files []walker.FileInfo, m manife
 			mu.Lock()
 			m[j.file.RelPath] = j.hash
 			processedFiles = append(processedFiles, j.file.RelPath)
+			if err := manifest.Save(repoPath, m); err != nil {
+				slog.Warn("failed to save manifest incrementally", "error", err)
+			}
 			mu.Unlock()
 		}(j)
 	}

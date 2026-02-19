@@ -113,6 +113,9 @@ func Run(ctx context.Context, repoPath string, files []walker.FileInfo, processe
 
 				mu.Lock()
 				m[manifestKey(folder)] = "generated"
+				if err := manifest.Save(repoPath, m); err != nil {
+					slog.Warn("failed to save manifest incrementally", "error", err)
+				}
 				mu.Unlock()
 			}(folder)
 		}
