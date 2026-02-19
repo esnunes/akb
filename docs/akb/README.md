@@ -1,32 +1,33 @@
 # akb — AI Knowledge Base Generator
 
-CLI tool that analyzes source code repositories and generates structured markdown documentation for use as context by AI coding agents. It operates through two subcommands: `init` (discovers and classifies file extensions) and `generate` (produces per-file and per-folder markdown summaries with incremental caching).
+CLI tool that analyzes source repositories and produces a hierarchical markdown knowledge base designed for consumption by AI coding agents. It uses the Claude CLI as a subprocess to classify file types, analyze individual source files, and generate folder-level summaries.
 
-## Architecture
+## Commands
 
-`main.go` serves as the entry point, parsing subcommands and flags via stdlib `flag`, then delegating to two orchestration functions:
+- **`init`** — Discovers file extensions in a repo, classifies them as source/non-source via Claude CLI, and writes a config file (`docs/akb/.config.yaml`).
+- **`generate`** — Incrementally analyzes source files and produces markdown documentation under `docs/akb/`, with concurrent processing and crash-resilient manifest tracking.
 
-- **`cmdInit`** — One-time setup: discovers file extensions in the repo, uses Claude CLI to classify them as source/non-source, and writes `.akb.yaml` config.
-- **`cmdGenerate`** — Main workflow: walks source files per config, runs concurrent LLM analysis, generates folder summaries bottom-up, cleans stale outputs, and maintains a manifest for incremental processing.
-
-## Internal Packages (`internal/`)
-
-The implementation follows a pipeline architecture:
-
-1. **config/** — Loads `.akb.yaml` defining analysis scope (source extensions, exclude patterns)
-2. **walker/** — Filesystem traversal with two modes: extension discovery (`init`) and source file collection (`generate`)
-3. **analyzer/** — Concurrent file processing with semaphore-bounded goroutines, manifest-based cache hits, and markdown output to `docs/akb/`
-4. **summarizer/** — Bottom-up folder summaries using dirty-set propagation to minimize redundant LLM calls
-5. **claude/** — LLM integration layer wrapping the `claude` CLI subprocess with retry/backoff and JSON envelope handling
-6. **manifest/** — SHA-256 hash tracking in `.manifest.json` for incremental processing across runs
-
-## Data Flow
+## Processing Pipeline (`generate`)
 
 ```
-config → walker → analyzer → claude
-                     │           ↑
-                     ↓           │
-                 manifest   summarizer
+config → walker → analyzer → summarizer
+                     ↓            ↓
+                  manifest ← (shared)
+                     ↑
+                  claude (LLM subprocess)
 ```
 
-Config defines scope, walker discovers files, analyzer processes them concurrently via claude, summarizer rolls up folder-level docs, and manifest persists state for incremental runs. All markdown output lands in `docs/akb/`.
+1. **config** loads analysis scope (source extensions, exclude patterns)
+2. **walker** traverses the repo tree, collecting matching files
+3. **manifest** tracks SHA-256 hashes for incremental builds, skipping unchanged files
+4. **analyzer** runs concurrent per-file analysis via Claude CLI, producing per-file markdown docs
+5. **summarizer** generates bottom-up folder summaries from the per-file output
+6. Both analyzer and summarizer clean stale outputs for deleted sources
+
+## Key Design Decisions
+
+- **Claude CLI as subprocess** — all LLM calls route through `claude -p <prompt>` with retry logic and response envelope parsing
+- **Incremental processing** — manifest saves after each processed item for crash resilience
+- **Bounded concurrency** — `sync.WaitGroup` + buffered channel semaphore (1–20 workers)
+- **Atomic writes** — temp-file + `os.Rename` for both manifest and output files
+- **stdlib only** — uses `flag.NewFlagSet` per subcommand, `slog` for logging; sole external dependency is `gopkg.in/yaml.v3`

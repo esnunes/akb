@@ -1,34 +1,25 @@
 # internal/summarizer/
 
-Generates bottom-up folder summaries for the repository knowledge base, processing directories from deepest to shallowest so that child summaries feed into parent summarization via Claude CLI.
+Generates bottom-up folder-level markdown summaries for the repository's documentation tree, orchestrating concurrent Claude CLI calls to produce hierarchical context that complements per-file summaries.
 
 ## Architecture
 
-The package implements a single orchestration pipeline in `Run`:
+The package processes folders **deepest-first** so child summaries are available before parent summarization begins. The pipeline:
 
-1. **Collect** — `collectFolders` discovers all unique folder paths (including ancestors) that transitively contain source files.
-2. **Dirty detection** — `buildDirtySet` determines which folders need regeneration based on recently processed files, missing summary files on disk, or the `force` flag. Dirtiness propagates upward to ancestor folders.
-3. **Depth grouping** — `groupByDepth` sorts folders deepest-first, enabling bottom-up processing so child summaries exist before their parents are summarized.
-4. **Concurrent generation** — A goroutine pool with semaphore processes each depth level, calling `gatherChildContent` to assemble per-file and subfolder markdown, then `claude.SummarizeFolder` to generate the summary. Results are written to `docs/akb/` and recorded in the manifest with `dir:` prefixed keys.
-5. **Stale cleanup** — `CleanStale` removes orphaned folder summaries for directories that no longer contain source files.
+1. **Collect** — `collectFolders` derives all unique folder paths (including ancestors) from the file list.
+2. **Dirty detection** — `buildDirtySet` determines which folders need regeneration based on changed files, missing summaries, or the `force` flag. Dirtiness propagates upward to ancestors.
+3. **Group by depth** — `groupByDepth` buckets folders deepest-first for bottom-up processing.
+4. **Concurrent summarization** — `Run` processes each depth level using a semaphore-bounded goroutine pool. For each dirty folder, `gatherChildContent` assembles per-file and subfolder markdown, then `claude.SummarizeFolder` generates the summary. Results are written to `docs/akb/` and the manifest is saved incrementally.
+5. **Stale cleanup** — `CleanStale` removes summary files and manifest entries for folders no longer containing source files.
 
-## Key Types
+## Key Design Decisions
 
-- **`Result`** — Aggregated outcome (processed, failed, cached counts plus `FolderError` details).
-- **`FolderError`** — Records a per-folder failure with path and error.
+- **Incremental processing** — Only dirty folders are regenerated; clean folders are counted as cached. Manifest tracks state with `dir:`-prefixed keys.
+- **Bottom-up ordering** — Guarantees child summaries exist before parents consume them via `gatherChildContent`.
+- **Atomic manifest saves** — Manifest is saved after each folder to preserve progress on interruption.
+- **Output mapping** — Root folder (`.`) maps to `docs/akb/README.md`; others map to `docs/akb/<parent>/<name>.md`.
 
-## Output Convention
+## Files
 
-- Root folder (`.`) maps to `docs/akb/README.md`
-- Other folders map to `docs/akb/<parent>/<name>.md`
-- Manifest keys use `dir:` prefix (e.g., `dir:internal/claude`)
-
-## Dependencies
-
-- `claude.SummarizeFolder` — LLM-powered summary generation
-- `walker.FileInfo` — source file metadata from the file discovery phase
-- `manifest.Manifest` — content-hash manifest for caching, mutated in-place
-
-## Test Coverage
-
-`summarizer_test.go` provides table-driven tests for all helper functions: folder collection, depth grouping, output path mapping, dirty-set computation, depth calculation, and manifest key round-tripping.
+- **summarizer.go** — All production logic: folder collection, dirty detection, depth grouping, child content gathering, concurrent orchestration (`Run`), and stale cleanup (`CleanStale`).
+- **summarizer_test.go** — Table-driven tests covering `collectFolders`, `groupByDepth`, `outputPath`, `buildDirtySet`, `depth`, and `manifestKey`/`fromManifestKey` round-tripping.
